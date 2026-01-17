@@ -22,6 +22,8 @@ start:
     lda #AIR_COLOR
     sta $d020
     sta $d021
+
+    jsr init
     
 mainloop:
     jsr solve
@@ -40,6 +42,20 @@ waitkey:
 
 exit:
     jsr cleanup
+    rts
+
+init:
+    ldx #0
+init_loop:
+    lda initheights,x
+    sta heights,x
+    
+    lda #0
+    sta velocities,x
+    
+    inx
+    cpx #40
+    bne init_loop
     rts
 
 cleanup:
@@ -205,10 +221,15 @@ store_height:
 leftboundary:
     .byte 0
 heights:
-    .fill 10, 200   // dam break
-    .fill 30, 10
+    .fill 40, 0 
 rightboundary:
     .byte 0
+
+initheights:
+    .fill 10, 50   // dam break
+    .fill 30, 10
+
+    .fill 30, 10
 
 velocities:
     .fill 40, 0
