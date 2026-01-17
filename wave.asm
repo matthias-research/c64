@@ -228,8 +228,6 @@ rightboundary:
 initheights:
     .fill 10, 50   // dam break
     .fill 30, 10
-
-    .fill 30, 10
-
+    
 velocities:
     .fill 40, 0
