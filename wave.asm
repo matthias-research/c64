@@ -3,6 +3,9 @@
 .label ypos     = $03
 .label charpos  = $04 // Takes 2 bytes ($04 and $05)
 .label colorpos = $06 // Takes 2 bytes ($06 and $07)
+.label scaled_height = $09
+.label temp_sum = $0a
+.label temp_term = $0b
 
 .pc = $0801 "BasicUpstart"
 :BasicUpstart(start)
@@ -21,11 +24,21 @@ start:
     sta $d021
     
 mainloop:
+    jsr solve
     jsr display
+
+waitkey:
+    jsr $ffe4       // GETIN
+    beq waitkey     // Wait for key press
     
-    jsr $ffe4      // GETIN
-    beq mainloop   // Loop if no key pressed
+    cmp #'Q'        // Check for 'Q' to exit
+    beq exit
+    cmp #'q'        // Check for 'q' to exit
+    beq exit
     
+    jmp mainloop    // Continue simulation
+
+exit:
     jsr cleanup
     rts
 
@@ -36,7 +49,7 @@ cleanup:
 
     // 2. Clear the screen (optional but helpful)
     // This calls the KERNAL routine to clear screen and reset pointers
-    // jsr $e544 
+    jsr $e544 
     
     // 3. Reset border/background to default if you changed them
     lda #14 // Light Blue border
@@ -85,12 +98,18 @@ skip2:
     rts
 
 drawchar:
+    ldx xpos
+    lda heights,x
+    lsr
+    lsr
+    lsr
+    sta scaled_height
+
     lda #24
     sec
     sbc ypos
     
-    ldx xpos
-    cmp heights,x
+    cmp scaled_height
     bcs setair      
     
 setwater:
@@ -109,8 +128,87 @@ setair:
     sta (colorpos),y
     rts
 
+solve:
+    jsr updatevelocities
+    jsr updateheights
+
+    rts
+
+updatevelocities:
+    // reflecting boundaries
+    lda heights
+    sta leftboundary
+    lda heights+39
+    sta rightboundary
+    
+    ldx #0
+uvloop:
+    lda heights-1,x
+    lsr
+    sta temp_sum
+    lda heights+1,x
+    lsr
+    clc
+    adc temp_sum
+    sta temp_sum
+    
+    lda heights,x
+    lsr
+    sta temp_term
+    lda temp_sum
+    sec
+    sbc temp_term
+
+    clc
+    adc velocities,x
+    sta velocities,x
+
+    inx
+    cpx #40
+    bne uvloop
+    rts
+
+updateheights:
+    ldx #0
+hloop:
+    lda velocities,x
+    cmp #$80
+    ror
+    cmp #$80
+    ror
+    cmp #$80
+    ror
+    
+    clc
+    adc heights,x
+    
+    cmp #201
+    bcc store_height
+    
+    ldy velocities,x
+    bmi clamp_zero
+    
+    lda #200
+    jmp store_height
+
+clamp_zero:
+    lda #0
+
+store_height:
+    sta heights,x
+
+    inx
+    cpx #40
+    bne hloop
+    rts
+
+leftboundary:
+    .byte 0
 heights:
-    .fill 10, 15    // 10 columns at height 15
-    .fill 10, 10    // 10 columns at height 10
-    .fill 10, 5     // 10 columns at height 5
-    .fill 10, 2     // 10 columns at height 2
+    .fill 10, 200   // dam break
+    .fill 30, 10
+rightboundary:
+    .byte 0
+
+velocities:
+    .fill 40, 0
