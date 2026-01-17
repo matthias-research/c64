@@ -25,20 +25,17 @@ start:
 
     jsr init
     
+wait_start:
+    jsr $ffe4       // GETIN
+    beq wait_start
+
 mainloop:
     jsr solve
     jsr display
 
-waitkey:
     jsr $ffe4       // GETIN
-    beq waitkey     // Wait for key press
-    
-    cmp #'Q'        // Check for 'Q' to exit
-    beq exit
-    cmp #'q'        // Check for 'q' to exit
-    beq exit
-    
-    jmp mainloop    // Continue simulation
+    beq mainloop    // No key? Continue
+    jmp exit        // Key pressed? Exit
 
 exit:
     jsr cleanup
@@ -160,16 +157,17 @@ updatevelocities:
     ldx #0
 uvloop:
     lda heights-1,x
-    lsr
+    lsr 
+    adc #0 // round up
     sta temp_sum
     lda heights+1,x
     lsr
+//    adc #0 // round up
     clc
     adc temp_sum
     sta temp_sum
     
     lda heights,x
-    lsr
     sta temp_term
     lda temp_sum
     sec
@@ -188,26 +186,37 @@ updateheights:
     ldx #0
 hloop:
     lda velocities,x
-    cmp #$80
-    ror
-    cmp #$80
-    ror
-    cmp #$80
-    ror
-    
     clc
-    adc heights,x
-    
-    cmp #201
-    bcc store_height
-    
-    ldy velocities,x
-    bmi clamp_zero
-    
-    lda #200
+    cmp #$80
+    ror
+    cmp #$80
+    ror
+    cmp #$80
+    ror
+    sta temp_term   // Save signed delta
+
+    lda velocities,x // Check sign of velocity (and delta)
+    bmi neg_vel
+
+pos_vel:
+    lda heights,x
+    clc
+    adc temp_term
+    bcs clamp_255   // Carry Set = Overflow > 255
     jmp store_height
 
-clamp_zero:
+neg_vel:
+    lda heights,x
+    clc
+    adc temp_term
+    bcc clamp_0     // Carry Clear = Underflow < 0
+    jmp store_height
+
+clamp_255:
+    lda #255
+    jmp store_height
+
+clamp_0:
     lda #0
 
 store_height:
@@ -226,7 +235,7 @@ rightboundary:
     .byte 0
 
 initheights:
-    .fill 10, 50   // dam break
+    .fill 10, 100   // dam break
     .fill 30, 10
     
 velocities:
