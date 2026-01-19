@@ -25,6 +25,7 @@ start:
     sta $d021
 
     jsr init
+    jsr display
     
 wait_start:
     jsr $ffe4       // GETIN
@@ -181,15 +182,12 @@ updatevelocities:
     
     ldx #0
 uvloop:
+
+    // Calculate Average of Neighbors
     lda heights-1,x
-    lsr 
-    adc #0 // round up
-    sta temp_sum
-    lda heights+1,x
-    lsr
-//    adc #0 // round up
     clc
-    adc temp_sum
+    adc heights+1,x
+    ror               // A = (Left + Right) / 2
     sta temp_sum
     
     lda heights,x
