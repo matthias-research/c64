@@ -1,8 +1,8 @@
 // Variables - Moved to Zero Page ($02-$08)
 .label xpos     = $02
 .label ypos     = $03
-.label charpos  = $04 // Takes 2 bytes ($04 and $05)
-.label colorpos = $06 // Takes 2 bytes ($06 and $07)
+.label char_pos  = $04 // Takes 2 bytes ($04 and $05)
+.label color_pos = $06 // Takes 2 bytes ($06 and $07)
 .label scaled_height = $09
 .label temp_sum = $0a
 .label temp_term = $0b
@@ -31,12 +31,12 @@ wait_start:
     jsr $ffe4       // GETIN
     beq wait_start
 
-mainloop:
+main_loop:
     jsr solve
     jsr display
 
     jsr $ffe4       // GETIN
-    beq mainloop    // No key? Continue
+    beq main_loop    // No key? Continue
     jmp exit        // Key pressed? Exit
 
 exit:
@@ -57,12 +57,12 @@ clear_loop:
 
     ldx #0
 init_loop:
-    lda initheights,x
+    lda init_heights,x
     sta heights,x
     
     lda #0
     sta velocities,x
-    sta displayheights,x
+    sta display_heights,x
     
     inx
     cpx #40
@@ -96,7 +96,7 @@ disp_loop:
     lsr
     sta scaled_height // New Height
 
-    lda displayheights,x // Old Height
+    lda display_heights,x // Old Height
     cmp scaled_height
     beq update_done     // Equal, nothing to do
 
@@ -111,7 +111,7 @@ falling_water:
 
     lda scaled_height
     sta current_h_iter // Start
-    lda displayheights,x
+    lda display_heights,x
     sta end_h_val     // End
     jmp start_fill
 
@@ -122,7 +122,7 @@ rising_water:
     lda #WATER_COLOR
     sta fill_color_val
 
-    lda displayheights,x
+    lda display_heights,x
     sta current_h_iter
     lda scaled_height
     sta end_h_val
@@ -142,14 +142,14 @@ fill_loop:
 
     // Setup Pointer
     lda row_lo,y
-    sta colorpos
+    sta color_pos
     lda row_hi,y
-    sta colorpos+1
+    sta color_pos+1
     
     // Write Color
     ldy xpos  // Column Index
     lda fill_color_val
-    sta (colorpos),y
+    sta (color_pos),y
     
     inc current_h_iter
     jmp fill_loop
@@ -158,7 +158,7 @@ fill_done:
     // Update displayheights
     ldx xpos
     lda scaled_height
-    sta displayheights,x
+    sta display_heights,x
 
 update_done:
     inc xpos
@@ -168,17 +168,18 @@ update_done:
     rts
 
 solve:
-    jsr updatevelocities
-    jsr updateheights
+    jsr update_velocities
+    jsr update_heights
 
     rts
 
-updatevelocities:
+
+update_velocities:
     // reflecting boundaries
     lda heights
-    sta leftboundary
+    sta left_boundary
     lda heights+39
-    sta rightboundary
+    sta right_boundary
     
     ldx #0
 uvloop:
@@ -196,6 +197,8 @@ uvloop:
     sec
     sbc temp_term
 
+    jsr mult_by_timestep
+
     clc
     adc velocities,x
     sta velocities,x
@@ -205,43 +208,29 @@ uvloop:
     bne uvloop
     rts
 
-updateheights:
+update_heights:
     ldx #0
 hloop:
-    lda velocities,x
-    clc
-    cmp #$80
-    ror
-    cmp #$80
-    ror
-    cmp #$80
-    ror
-    sta temp_term   // Save signed delta
-
     lda velocities,x // Check sign of velocity (and delta)
-    bmi neg_vel
-
-pos_vel:
+    jsr mult_by_timestep
+    sta temp_term
     lda heights,x
     clc
     adc temp_term
-    bcs clamp_255   // Carry Set = Overflow > 255
+    
+    // Clamp to [0, 200]
+    bmi clamp_to_zero    // If negative (bit 7 set), clamp to 0
+    cmp #201
+    bcs clamp_to_200     // If >= 201, clamp to 200
     jmp store_height
-
-neg_vel:
-    lda heights,x
-    clc
-    adc temp_term
-    bcc clamp_0     // Carry Clear = Underflow < 0
-    jmp store_height
-
-clamp_255:
-    lda #255
-    jmp store_height
-
-clamp_0:
+    
+clamp_to_zero:
     lda #0
-
+    jmp store_height
+    
+clamp_to_200:
+    lda #200
+    
 store_height:
     sta heights,x
 
@@ -250,19 +239,38 @@ store_height:
     bne hloop
     rts
 
-leftboundary:
+mult_by_timestep: // simply divide by 16 with rounding toward zero
+    bpl positive   
+    clc
+    adc #3         // add 7 to round toward zero
+        
+positive:
+    // Now do 2 arithmetic right shifts (divide by 16) 
+    cmp #$80       
+    ror
+    cmp #$80
+    ror
+    rts    
+
+left_boundary:
     .byte 0
 heights:
     .fill 40, 0 
-rightboundary:
+right_boundary:
     .byte 0
 
-displayheights:
+display_heights:
     .fill 40, 0 
 
-initheights:
-    .fill 10, 100   // dam break
-    .fill 30, 10
+init_heights:
+    .fill 5, 10
+    .fill 5, 30
+    .fill 5, 50
+    .fill 5, 70
+    .fill 5, 100
+    .fill 5, 70
+    .fill 5, 30
+    .fill 5, 10
     
 velocities:
     .fill 40, 0
