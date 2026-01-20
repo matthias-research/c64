@@ -35,9 +35,12 @@ main_loop:
     jsr solve
     jsr display
 
+wait_key:
     jsr $ffe4       // GETIN
-    beq main_loop    // No key? Continue
-    jmp exit        // Key pressed? Exit
+    beq wait_key    // No key? Wait
+    cmp #$51        // Check if 'Q' (PETSCII 81)
+    beq exit        // If 'Q', exit
+    jmp main_loop   // Otherwise, continue simulation
 
 exit:
     jsr cleanup
@@ -240,6 +243,7 @@ store_height:
     rts
 
 mult_by_timestep: // simply divide by 16 with rounding toward zero
+    rts
     bpl positive   
     clc
     adc #3         // add 7 to round toward zero
@@ -262,16 +266,28 @@ right_boundary:
 display_heights:
     .fill 40, 0 
 
+// init_heights:
+//     .fill 5, 10
+//     .fill 5, 30
+//     .fill 5, 50
+//     .fill 5, 70
+//     .fill 5, 100
+//     .fill 5, 70
+//     .fill 5, 30
+//     .fill 5, 10
+
 init_heights:
-    .fill 5, 10
-    .fill 5, 30
-    .fill 5, 50
-    .fill 5, 70
-    .fill 5, 100
-    .fill 5, 70
-    .fill 5, 30
-    .fill 5, 10
+    .byte   0,   1,   3,   6,  10,  15,  22,  29,  36,  44
+    .byte  52,  60,  68,  75,  82,  87,  92,  96,  99, 100
+    .byte 100,  99,  96,  92,  87,  82,  75,  68,  60,  52
+    .byte  44,  36,  29,  22,  15,  10,   6,   3,   1,   0
     
+// init_heights:
+//     .byte   0,   1,   5,  11,  20,  31,  43,  57,  72,  88
+//     .byte 104, 120, 135, 150, 163, 175, 185, 192, 197, 200
+//     .byte 200, 197, 192, 185, 175, 163, 150, 135, 120, 104
+//     .byte  88,  72,  57,  43,  31,  20,  11,   5,   1,   0
+        
 velocities:
     .fill 40, 0
 
