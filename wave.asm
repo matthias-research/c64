@@ -1,8 +1,8 @@
 // Variables - Moved to Zero Page ($02-$08)
 .label xpos     = $02
 .label ypos     = $03
-.label char_pos  = $04 // Takes 2 bytes ($04 and $05)
-.label color_pos = $06 // Takes 2 bytes ($06 and $07)
+.label charpos  = $04 // Takes 2 bytes ($04 and $05)
+.label colorpos = $06 // Takes 2 bytes ($06 and $07)
 .label scaled_height = $09
 .label temp_sum = $0a
 .label temp_term = $0b
@@ -25,22 +25,18 @@ start:
     sta $d021
 
     jsr init
-    jsr display
     
 wait_start:
     jsr $ffe4       // GETIN
     beq wait_start
 
-main_loop:
+mainloop:
     jsr solve
     jsr display
 
-wait_key:
     jsr $ffe4       // GETIN
-    beq wait_key    // No key? Wait
-    cmp #$51        // Check if 'Q' (PETSCII 81)
-    beq exit        // If 'Q', exit
-    jmp main_loop   // Otherwise, continue simulation
+    beq mainloop    // No key? Continue
+    jmp exit        // Key pressed? Exit
 
 exit:
     jsr cleanup
@@ -60,12 +56,12 @@ clear_loop:
 
     ldx #0
 init_loop:
-    lda init_heights,x
+    lda initheights,x
     sta heights,x
     
     lda #0
     sta velocities,x
-    sta display_heights,x
+    sta displayheights,x
     
     inx
     cpx #40
@@ -99,7 +95,7 @@ disp_loop:
     lsr
     sta scaled_height // New Height
 
-    lda display_heights,x // Old Height
+    lda displayheights,x // Old Height
     cmp scaled_height
     beq update_done     // Equal, nothing to do
 
@@ -114,7 +110,7 @@ falling_water:
 
     lda scaled_height
     sta current_h_iter // Start
-    lda display_heights,x
+    lda displayheights,x
     sta end_h_val     // End
     jmp start_fill
 
@@ -125,7 +121,7 @@ rising_water:
     lda #WATER_COLOR
     sta fill_color_val
 
-    lda display_heights,x
+    lda displayheights,x
     sta current_h_iter
     lda scaled_height
     sta end_h_val
@@ -145,14 +141,14 @@ fill_loop:
 
     // Setup Pointer
     lda row_lo,y
-    sta color_pos
+    sta colorpos
     lda row_hi,y
-    sta color_pos+1
+    sta colorpos+1
     
     // Write Color
     ldy xpos  // Column Index
     lda fill_color_val
-    sta (color_pos),y
+    sta (colorpos),y
     
     inc current_h_iter
     jmp fill_loop
@@ -161,7 +157,7 @@ fill_done:
     // Update displayheights
     ldx xpos
     lda scaled_height
-    sta display_heights,x
+    sta displayheights,x
 
 update_done:
     inc xpos
@@ -171,27 +167,29 @@ update_done:
     rts
 
 solve:
-    jsr update_velocities
-    jsr update_heights
+    jsr updatevelocities
+    jsr updateheights
 
     rts
 
-
-update_velocities:
+updatevelocities:
     // reflecting boundaries
     lda heights
-    sta left_boundary
+    sta leftboundary
     lda heights+39
-    sta right_boundary
+    sta rightboundary
     
     ldx #0
 uvloop:
-
-    // Calculate Average of Neighbors
     lda heights-1,x
+    lsr 
+    adc #0 // round up
+    sta temp_sum
+    lda heights+1,x
+    lsr
+//    adc #0 // round up
     clc
-    adc heights+1,x
-    ror               // A = (Left + Right) / 2
+    adc temp_sum
     sta temp_sum
     
     lda heights,x
@@ -199,8 +197,6 @@ uvloop:
     lda temp_sum
     sec
     sbc temp_term
-
-    jsr mult_by_timestep
 
     clc
     adc velocities,x
@@ -211,29 +207,43 @@ uvloop:
     bne uvloop
     rts
 
-update_heights:
+updateheights:
     ldx #0
 hloop:
+    lda velocities,x
+    clc
+    cmp #$80
+    ror
+    cmp #$80
+    ror
+    cmp #$80
+    ror
+    sta temp_term   // Save signed delta
+
     lda velocities,x // Check sign of velocity (and delta)
-    jsr mult_by_timestep
-    sta temp_term
+    bmi neg_vel
+
+pos_vel:
     lda heights,x
     clc
     adc temp_term
-    
-    // Clamp to [0, 200]
-    bmi clamp_to_zero    // If negative (bit 7 set), clamp to 0
-    cmp #201
-    bcs clamp_to_200     // If >= 201, clamp to 200
+    bcs clamp_255   // Carry Set = Overflow > 255
     jmp store_height
-    
-clamp_to_zero:
+
+neg_vel:
+    lda heights,x
+    clc
+    adc temp_term
+    bcc clamp_0     // Carry Clear = Underflow < 0
+    jmp store_height
+
+clamp_255:
+    lda #255
+    jmp store_height
+
+clamp_0:
     lda #0
-    jmp store_height
-    
-clamp_to_200:
-    lda #200
-    
+
 store_height:
     sta heights,x
 
@@ -242,52 +252,20 @@ store_height:
     bne hloop
     rts
 
-mult_by_timestep: // simply divide by 16 with rounding toward zero
-    rts
-    bpl positive   
-    clc
-    adc #3         // add 7 to round toward zero
-        
-positive:
-    // Now do 2 arithmetic right shifts (divide by 16) 
-    cmp #$80       
-    ror
-    cmp #$80
-    ror
-    rts    
-
-left_boundary:
+leftboundary:
     .byte 0
 heights:
     .fill 40, 0 
-right_boundary:
+rightboundary:
     .byte 0
 
-display_heights:
+displayheights:
     .fill 40, 0 
 
-// init_heights:
-//     .fill 5, 10
-//     .fill 5, 30
-//     .fill 5, 50
-//     .fill 5, 70
-//     .fill 5, 100
-//     .fill 5, 70
-//     .fill 5, 30
-//     .fill 5, 10
-
-init_heights:
-    .byte   0,   1,   3,   6,  10,  15,  22,  29,  36,  44
-    .byte  52,  60,  68,  75,  82,  87,  92,  96,  99, 100
-    .byte 100,  99,  96,  92,  87,  82,  75,  68,  60,  52
-    .byte  44,  36,  29,  22,  15,  10,   6,   3,   1,   0
+initheights:
+    .fill 10, 100   // dam break
+    .fill 30, 10
     
-// init_heights:
-//     .byte   0,   1,   5,  11,  20,  31,  43,  57,  72,  88
-//     .byte 104, 120, 135, 150, 163, 175, 185, 192, 197, 200
-//     .byte 200, 197, 192, 185, 175, 163, 150, 135, 120, 104
-//     .byte  88,  72,  57,  43,  31,  20,  11,   5,   1,   0
-        
 velocities:
     .fill 40, 0
 
