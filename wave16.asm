@@ -32,6 +32,10 @@ start:
     jsr init
     jsr display
 
+wait_start:
+    jsr $ffe4       // GETIN
+    beq wait_start  // Wait for key press to start
+
 main_loop:
     jsr solve
     jsr display
@@ -69,7 +73,8 @@ init_loop:
     sta velocities,y
     
     // Hi byte from init_heights
-    lda init_heights,x
+//    lda init_heights_dambreak,x
+    lda init_heights_wave,x
     sta heights+1,y
     
     // Clear velocities hi byte
@@ -242,8 +247,8 @@ uvloop:
     sbc heights+1,y
     sta temp_term+1
     
-    // Multiply by timestep (divide by 4)
-    jsr mult_by_timestep_4
+    // Δt × c² / (Δx)² = (1/16) × 16 / 2 = 1/2 (wave speed: 2√2 columns/timestep)
+    jsr divide_by_2
     
     // Add to velocity
     ldy offset
@@ -275,8 +280,8 @@ hloop:
     lda velocities+1,y
     sta temp_term+1
     
-    // Multiply by timestep (divide by 16)
-    jsr mult_by_timestep_16
+    // we use a time step of 1/16
+    jsr divide_by_16
     
     // Add to height
     lda heights,y
@@ -329,7 +334,7 @@ store_height:
 
 // 16-bit signed divide by 16 (arithmetic right shift 4 times)
 // Input: temp_term, Output: temp_acc
-mult_by_timestep_16:
+divide_by_16:
     lda temp_term
     sta temp_acc
     lda temp_term+1
@@ -362,25 +367,16 @@ mult_by_timestep_16:
     
     rts    
 
-mult_by_timestep_4:
-    lda temp_term
-    sta temp_acc
+// 16-bit signed divide by 2
+// Input: temp_term, Output: temp_acc
+divide_by_2:
     lda temp_term+1
+    cmp #$80
+    ror
     sta temp_acc+1
-    
-    // Do 2 arithmetic right shifts
-    // Shift 1
-    lda temp_acc+1
-    cmp #$80
-    ror temp_acc+1
-    ror temp_acc
-    
-    // Shift 2
-    lda temp_acc+1
-    cmp #$80
-    ror temp_acc+1
-    ror temp_acc
-        
+    lda temp_term
+    ror
+    sta temp_acc
     rts    
 
 // Boundary values (2 bytes each)
@@ -397,12 +393,18 @@ right_boundary:
 display_heights:
     .fill 40, 0 
 
-init_heights: // Initial heights high byte (40 bytes)
+init_heights_wave: // Initial heights high byte (40 bytes)
     .byte   0,   1,   3,   6,  10,  15,  22,  29,  36,  44
     .byte  52,  60,  68,  75,  82,  87,  92,  96,  99, 100
     .byte 100,  99,  96,  92,  87,  82,  75,  68,  60,  52
     .byte  44,  36,  29,  22,  15,  10,   6,   3,   1,   0
         
+init_heights_dambreak: // Initial heights high byte (40 bytes)
+    .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
+    .byte  10,  10,  10,  10,  10, 100, 100, 100, 100, 100
+    .byte 100, 100, 100, 100, 100,  10,  10,  10,  10,  10
+    .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
+            
 // Velocities array: 40 elements * 2 bytes = 80 bytes (interleaved lo/hi)
 velocities:
     .fill 80, 0
