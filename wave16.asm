@@ -3,6 +3,7 @@
 .label ypos     = $03
 .label char_pos  = $04 // Takes 2 bytes ($04 and $05)
 .label color_pos = $06 // Takes 2 bytes ($06 and $07)
+.label frame_counter = $08
 .label scaled_height = $09
 .label current_h_iter = $0c
 .label end_h_val = $0d
@@ -39,6 +40,7 @@ wait_start:
 main_loop:
     jsr solve
     jsr display
+    jsr update_timer
 
     jsr $ffe4       // GETIN - Check if key pressed
     bne exit        // If any key pressed, exit
@@ -74,7 +76,7 @@ init_loop:
     
     // Hi byte from init_heights
 //    lda init_heights_dambreak,x
-    lda init_heights_wave,x
+    lda init_heights_shifted_wave,x
     sta heights+1,y
     
     // Clear velocities hi byte
@@ -87,6 +89,11 @@ init_loop:
     inx
     cpx #40
     bne init_loop
+    
+    // Initialize frame counter
+    lda #0
+    sta frame_counter
+    
     rts
 
 cleanup:
@@ -103,6 +110,18 @@ cleanup:
     sta $d020
     lda #6  // Blue background
     sta $d021
+    rts
+
+update_timer:
+    inc frame_counter    // Increment the counter
+    lda frame_counter    // Load it
+    and #%00000111       // Mask to get 0-7
+    clc
+    adc #48              // Add '0' to get PETSCII digit
+    sta $0400            // Store at top-left corner (screen memory)
+    
+    lda #1               // White color
+    sta $d800            // Store at top-left corner (color memory)
     rts
 
 display:
@@ -398,7 +417,13 @@ init_heights_wave: // Initial heights high byte (40 bytes)
     .byte  52,  60,  68,  75,  82,  87,  92,  96,  99, 100
     .byte 100,  99,  96,  92,  87,  82,  75,  68,  60,  52
     .byte  44,  36,  29,  22,  15,  10,   6,   3,   1,   0
-        
+
+init_heights_shifted_wave: // Initial heights high byte (40 bytes)
+    .byte   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
+    .byte   0,   1,   3,   6,  10,  15,  22,  29,  36,  44
+    .byte  52,  60,  68,  75,  82,  87,  92,  96,  99, 100
+    .byte 100,  99,  96,  92,  87,  82,  75,  68,  60,  52
+
 init_heights_dambreak: // Initial heights high byte (40 bytes)
     .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
     .byte  10,  10,  10,  10,  10, 100, 100, 100, 100, 100
