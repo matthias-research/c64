@@ -34,20 +34,13 @@ start:
 
     jsr init
     jsr display
-    
-wait_start:
-    jsr $ffe4       // GETIN
-    beq wait_start
 
 main_loop:
     jsr solve
     jsr display
 
-wait_key:
-    jsr $ffe4       // GETIN
-    beq wait_key    // No key? Wait
-    cmp #$51        // Check if 'Q' (PETSCII 81)
-    beq exit        // If 'Q', exit
+    jsr $ffe4       // GETIN - Check if key pressed
+    bne exit        // If any key pressed, exit
     jmp main_loop   // Otherwise, continue simulation
 
 exit:
@@ -227,8 +220,8 @@ uvloop:
     sbc heights_hi,x
     sta temp_term_hi
     
-    // Multiply by timestep (divide by 16)
-    jsr mult_by_timestep_16
+    // Multiply by timestep (divide by 4)
+    jsr mult_by_timestep_4
     
     // Add to velocity
     lda temp_acc_lo
@@ -341,18 +334,43 @@ mult_by_timestep_16:
     
     rts    
 
+mult_by_timestep_4:
+    lda temp_term_lo
+    sta temp_acc_lo
+    lda temp_term_hi
+    sta temp_acc_hi
+    
+    // Do 4 arithmetic right shifts
+    // Shift 1
+    lda temp_acc_hi
+    cmp #$80
+    ror temp_acc_hi
+    ror temp_acc_lo
+    
+    // Shift 2
+    lda temp_acc_hi
+    cmp #$80
+    ror temp_acc_hi
+    ror temp_acc_lo
+        
+    rts    
+
+
 left_boundary_lo:
-    .byte 0
-left_boundary_hi:
     .byte 0
     
 heights_lo:
     .fill 40, 0 
-heights_hi:
-    .fill 40, 0
     
 right_boundary_lo:
     .byte 0
+
+left_boundary_hi:
+    .byte 0
+    
+heights_hi:
+    .fill 40, 0
+    
 right_boundary_hi:
     .byte 0
 
