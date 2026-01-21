@@ -158,7 +158,8 @@ ploop:
     tay
     lda #0
     sta heights,y
-    lda init_heights_shape,x
+//    lda init_heights_dambreak,x
+    lda init_heights_shifted_wave,x
     sta heights+1,y
     sta display_heights,x // Match initial visual to physics
     sta target_h          // Use to draw initial column
@@ -209,11 +210,15 @@ dfull_loop:
     asl
     tay
     lda heights+1,y
-    // Clamp to 199
-    cmp #200
-    bcc !+
+    // Scale x2 (Double Visualization)
+    cmp #100        // If >= 100, doubled value >= 200
+    bcs full_max
+    asl             // Double it
+    jmp full_store
+full_max:  
     lda #199
-!:  sta target_h
+full_store:
+    sta target_h
     
     // Reset display height to target
     ldx x_counter
@@ -281,10 +286,15 @@ dloop:
     asl
     tay
     lda heights+1,y  // Get physics high byte
-    cmp #200
-    bcc !+
+    // Scale x2 (Double Visualization)
+    cmp #100        // If >= 100, doubled value >= 200
+    bcs delta_max
+    asl             // Double it
+    jmp delta_store
+delta_max:  
     lda #199
-!:  sta target_h
+delta_store:
+    sta target_h
     
     cmp current_h
     beq next_col
@@ -496,8 +506,20 @@ display_heights:.fill 40, 0
 table_y_lo:     .fill 200, 0
 table_y_hi:     .fill 200, 0
 
-init_heights_shape: 
-    .byte 0,0,0,0,0,0,0,0,0,0
-    .byte 0,5,15,30,50,70,90,100,100,100
-    .byte 100,100,100,90,70,50,30,15,5,0
-    .byte 0,0,0,0,0,0,0,0,0,0
+init_heights_wave: // Initial heights high byte (40 bytes)
+    .byte   0,   1,   3,   6,  10,  15,  22,  29,  36,  44
+    .byte  52,  60,  68,  75,  82,  87,  92,  96,  99, 100
+    .byte 100,  99,  96,  92,  87,  82,  75,  68,  60,  52
+    .byte  44,  36,  29,  22,  15,  10,   6,   3,   1,   0
+
+init_heights_shifted_wave: // Initial heights high byte (40 bytes)
+    .byte   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
+    .byte   0,   1,   3,   6,  10,  15,  22,  29,  36,  44
+    .byte  52,  60,  68,  75,  82,  87,  92,  96,  99, 100
+    .byte 100,  99,  96,  92,  87,  82,  75,  68,  60,  52
+
+init_heights_dambreak: // Initial heights high byte (40 bytes)
+    .byte 100, 100, 100, 100, 100,  10,  10,  10,  10,  10
+    .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
+    .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
+    .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
