@@ -8,15 +8,12 @@
 .label end_h_val = $0d
 .label fill_color_val = $0e
 
-// 16-bit temporaries
-.label temp_sum_lo = $10
-.label temp_sum_hi = $11
-.label temp_term_lo = $12
-.label temp_term_hi = $13
-.label temp_avg_lo = $14
-.label temp_avg_hi = $15
-.label temp_acc_lo = $16
-.label temp_acc_hi = $17
+// 16-bit temporaries (2 bytes each, interleaved lo/hi)
+.label temp_sum = $10   // Takes 2 bytes ($10=lo, $11=hi)
+.label temp_term = $12  // Takes 2 bytes ($12=lo, $13=hi)
+.label temp_avg = $14   // Takes 2 bytes ($14=lo, $15=hi)
+.label temp_acc = $16   // Takes 2 bytes ($16=lo, $17=hi)
+.label offset = $18     // For x*2 calculations
 
 .pc = $0801 "BasicUpstart"
 :BasicUpstart(start)
@@ -61,14 +58,25 @@ clear_loop:
 
     ldx #0
 init_loop:
-    lda init_heights_lo,x
-    sta heights_lo,x
-    lda init_heights_hi,x
-    sta heights_hi,x
+    // Calculate offset = x * 2
+    txa
+    asl
+    tay
     
+    // Lo byte = 0
     lda #0
-    sta velocities_lo,x
-    sta velocities_hi,x
+    sta heights,y
+    sta velocities,y
+    
+    // Hi byte from init_heights
+    lda init_heights,x
+    sta heights+1,y
+    
+    // Clear velocities hi byte
+    lda #0
+    sta velocities+1,y
+    
+    // Clear display_heights
     sta display_heights,x
     
     inx
@@ -97,12 +105,17 @@ display:
     stx xpos
 disp_loop:
     ldx xpos
-    lda heights_hi,x    // Use high byte of 16-bit height
+    txa
+    asl
+    tay
+    
+    lda heights+1,y    // Use high byte of 16-bit height
     lsr
     lsr
     lsr
     sta scaled_height // New Height (0-25 range)
 
+    ldx xpos
     lda display_heights,x // Old Height
     cmp scaled_height
     beq update_done     // Equal, nothing to do
@@ -183,55 +196,65 @@ solve:
 
 update_velocities:
     // reflecting boundaries
-    lda heights_lo
-    sta left_boundary_lo
-    lda heights_hi
-    sta left_boundary_hi
-    lda heights_lo+39
-    sta right_boundary_lo
-    lda heights_hi+39
-    sta right_boundary_hi
+    lda heights
+    sta left_boundary
+    lda heights+1
+    sta left_boundary+1
+    lda heights+78  // 39*2 = 78
+    sta right_boundary
+    lda heights+79  // 39*2+1 = 79
+    sta right_boundary+1
     
     ldx #0
 uvloop:
+    // Calculate offset = x * 2
+    txa
+    asl
+    sta offset
+    
     // Calculate Average of Neighbors: (Left + Right) / 2
+    // Left neighbor offset = (x-1)*2 = offset - 2
+    // Right neighbor offset = (x+1)*2 = offset + 2
+    
     // Add lo bytes
-    lda heights_lo-1,x
+    ldy offset
+    lda heights-2,y  // Left neighbor lo
     clc
-    adc heights_lo+1,x
-    sta temp_sum_lo
+    adc heights+2,y  // Right neighbor lo
+    sta temp_sum
     
     // Add hi bytes with carry
-    lda heights_hi-1,x
-    adc heights_hi+1,x
-    sta temp_sum_hi
+    lda heights-1,y  // Left neighbor hi
+    adc heights+3,y  // Right neighbor hi
+    sta temp_sum+1
     
     // Divide by 2 (16-bit right shift)
-    lsr temp_sum_hi
-    ror temp_sum_lo
+    lsr temp_sum+1
+    ror temp_sum
     
     // Subtract current height: avg - heights[x]
-    lda temp_sum_lo
+    lda temp_sum
     sec
-    sbc heights_lo,x
-    sta temp_term_lo
+    sbc heights,y
+    sta temp_term
     
-    lda temp_sum_hi
-    sbc heights_hi,x
-    sta temp_term_hi
+    lda temp_sum+1
+    sbc heights+1,y
+    sta temp_term+1
     
     // Multiply by timestep (divide by 4)
     jsr mult_by_timestep_4
     
     // Add to velocity
-    lda temp_acc_lo
+    ldy offset
+    lda temp_acc
     clc
-    adc velocities_lo,x
-    sta velocities_lo,x
+    adc velocities,y
+    sta velocities,y
     
-    lda temp_acc_hi
-    adc velocities_hi,x
-    sta velocities_hi,x
+    lda temp_acc+1
+    adc velocities+1,y
+    sta velocities+1,y
 
     inx
     cpx #40
@@ -241,28 +264,33 @@ uvloop:
 update_heights:
     ldx #0
 hloop:
+    // Calculate offset = x * 2
+    txa
+    asl
+    tay
+    
     // Load velocity into temp for timestep multiply
-    lda velocities_lo,x
-    sta temp_term_lo
-    lda velocities_hi,x
-    sta temp_term_hi
+    lda velocities,y
+    sta temp_term
+    lda velocities+1,y
+    sta temp_term+1
     
     // Multiply by timestep (divide by 16)
     jsr mult_by_timestep_16
     
     // Add to height
-    lda heights_lo,x
+    lda heights,y
     clc
-    adc temp_acc_lo
-    sta temp_sum_lo
+    adc temp_acc
+    sta temp_sum
     
-    lda heights_hi,x
-    adc temp_acc_hi
-    sta temp_sum_hi
+    lda heights+1,y
+    adc temp_acc+1
+    sta temp_sum+1
     
     // Clamp to [0, $C800] (0 to 51200, which is 200*256)
     // Check if negative (bit 7 of hi byte)
-    lda temp_sum_hi
+    lda temp_sum+1
     bmi clamp_to_zero
     
     // Check if > $C800 (hi > $C8 or hi==$C8 and lo > 0)
@@ -270,29 +298,29 @@ hloop:
     bcs clamp_to_max
     cmp #$C8
     bne store_height
-    lda temp_sum_lo
+    lda temp_sum
     cmp #$01
     bcs clamp_to_max
-    lda temp_sum_hi  // Restore hi byte
+    lda temp_sum+1  // Restore hi byte
     jmp store_height
     
 clamp_to_zero:
     lda #0
-    sta temp_sum_lo
-    sta temp_sum_hi
+    sta temp_sum
+    sta temp_sum+1
     jmp store_height
     
 clamp_to_max:
     lda #$00
-    sta temp_sum_lo
+    sta temp_sum
     lda #$C8
-    sta temp_sum_hi
+    sta temp_sum+1
     
 store_height:
-    lda temp_sum_lo
-    sta heights_lo,x
-    lda temp_sum_hi
-    sta heights_hi,x
+    lda temp_sum
+    sta heights,y
+    lda temp_sum+1
+    sta heights+1,y
 
     inx
     cpx #40
@@ -300,101 +328,84 @@ store_height:
     rts
 
 // 16-bit signed divide by 16 (arithmetic right shift 4 times)
-// Input: temp_term_lo/hi, Output: temp_acc_lo/hi
+// Input: temp_term, Output: temp_acc
 mult_by_timestep_16:
-    lda temp_term_lo
-    sta temp_acc_lo
-    lda temp_term_hi
-    sta temp_acc_hi
+    lda temp_term
+    sta temp_acc
+    lda temp_term+1
+    sta temp_acc+1
     
     // Do 4 arithmetic right shifts
     // Shift 1
-    lda temp_acc_hi
+    lda temp_acc+1
     cmp #$80
-    ror temp_acc_hi
-    ror temp_acc_lo
+    ror temp_acc+1
+    ror temp_acc
     
     // Shift 2
-    lda temp_acc_hi
+    lda temp_acc+1
     cmp #$80
-    ror temp_acc_hi
-    ror temp_acc_lo
+    ror temp_acc+1
+    ror temp_acc
     
     // Shift 3
-    lda temp_acc_hi
+    lda temp_acc+1
     cmp #$80
-    ror temp_acc_hi
-    ror temp_acc_lo
+    ror temp_acc+1
+    ror temp_acc
     
     // Shift 4
-    lda temp_acc_hi
+    lda temp_acc+1
     cmp #$80
-    ror temp_acc_hi
-    ror temp_acc_lo
+    ror temp_acc+1
+    ror temp_acc
     
     rts    
 
 mult_by_timestep_4:
-    lda temp_term_lo
-    sta temp_acc_lo
-    lda temp_term_hi
-    sta temp_acc_hi
+    lda temp_term
+    sta temp_acc
+    lda temp_term+1
+    sta temp_acc+1
     
-    // Do 4 arithmetic right shifts
+    // Do 2 arithmetic right shifts
     // Shift 1
-    lda temp_acc_hi
+    lda temp_acc+1
     cmp #$80
-    ror temp_acc_hi
-    ror temp_acc_lo
+    ror temp_acc+1
+    ror temp_acc
     
     // Shift 2
-    lda temp_acc_hi
+    lda temp_acc+1
     cmp #$80
-    ror temp_acc_hi
-    ror temp_acc_lo
+    ror temp_acc+1
+    ror temp_acc
         
     rts    
 
-
-left_boundary_lo:
-    .byte 0
+// Boundary values (2 bytes each)
+left_boundary:
+    .byte 0, 0
     
-heights_lo:
-    .fill 40, 0 
+// Heights array: 40 elements * 2 bytes = 80 bytes (interleaved lo/hi)
+heights:
+    .fill 80, 0 
     
-right_boundary_lo:
-    .byte 0
-
-left_boundary_hi:
-    .byte 0
-    
-heights_hi:
-    .fill 40, 0
-    
-right_boundary_hi:
-    .byte 0
+right_boundary:
+    .byte 0, 0
 
 display_heights:
     .fill 40, 0 
 
-// Initial heights scaled by 256 for 16-bit (low bytes)
-init_heights_lo:
-    .byte   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
-    .byte   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
-    .byte   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
-    .byte   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
-
-// Initial heights scaled by 256 for 16-bit (high bytes)
-init_heights_hi:
+init_heights: // Initial heights high byte (40 bytes)
     .byte   0,   1,   3,   6,  10,  15,  22,  29,  36,  44
     .byte  52,  60,  68,  75,  82,  87,  92,  96,  99, 100
     .byte 100,  99,  96,  92,  87,  82,  75,  68,  60,  52
     .byte  44,  36,  29,  22,  15,  10,   6,   3,   1,   0
         
-velocities_lo:
-    .fill 40, 0
-velocities_hi:
-    .fill 40, 0
+// Velocities array: 40 elements * 2 bytes = 80 bytes (interleaved lo/hi)
+velocities:
+    .fill 80, 0
 
 // Tables for Color RAM rows
 row_lo:
