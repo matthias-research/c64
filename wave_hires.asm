@@ -6,24 +6,10 @@
 .const BITMAP_MEM = $2000
 .const SCREEN_RAM = $0400
 
-// --- zero page variables ---
-// Physics and Display counters
-.label x_counter     = $02 
-.label iter_h        = $03
-.label target_h      = $04
-.label current_h     = $05
-.label fill_val      = $06
-.label limit_h       = $07
-
-// Addressing pointers
-.label zp_col_offset = $08 // 2 bytes
-.label zp_draw_ptr   = $0a // 2 bytes
-.label zp_temp_ptr   = $0c // 2 bytes
-
-// Math variables
-.label temp_sum      = $0e // 2 bytes
-.label temp_term     = $10 // 2 bytes
-.label temp_acc      = $12 // 2 bytes
+// --- zero page variables (safe zone only) ---
+// Only 2-byte pointers that need indirect addressing modes
+.label zp_draw_ptr   = $fb // 2 bytes - used for (indirect),y addressing
+.label zp_temp_ptr   = $fd // 2 bytes - used for (indirect),y addressing
 
 .pc = $0801 "BasicUpstart"
 :BasicUpstart(start)
@@ -32,13 +18,15 @@
 
 start:
     // 1. Setup
-    lda #0 
-    sta $d020    
-    sta $d021    
+    lda #0
+    sta $d020    // border black
 
     jsr show_splash
     jsr init_tables
     jsr init_graphics
+
+restart_sim:
+    jsr init_graphics  // Clear bitmap before redrawing
     jsr init_physics
     
     // Draw initial state robustly
@@ -52,12 +40,36 @@ loop:
     jsr solve
     jsr display_delta
     
-    // Check key to exit
+    // Check key for restart or exit
     jsr $ffe4
     beq loop
     
+    // Check if key is 1, 2, or 3
+    cmp #$31        // '1' in ASCII
+    beq key_1
+    cmp #$32        // '2' in ASCII
+    beq key_2
+    cmp #$33        // '3' in ASCII
+    beq key_3
+    
+    // Any other key exits
     jsr cleanup
     rts
+
+key_1:
+    lda #1
+    sta config_select
+    jmp restart_sim
+
+key_2:
+    lda #2
+    sta config_select
+    jmp restart_sim
+
+key_3:
+    lda #3
+    sta config_select
+    jmp restart_sim
 
 // ----------------------------------------------------------------
 // Initialization
@@ -159,8 +171,31 @@ ploop:
     tay
     lda #0
     sta heights,y
-//    lda init_heights_dambreak,x
+    
+    // Select initial heights based on config_select
+    lda config_select
+    cmp #1
+    beq load_wave
+    cmp #2
+    beq load_shifted_wave
+    cmp #3
+    beq load_dambreak
+    
+    // Default to shifted_wave
+    jmp load_shifted_wave
+
+load_wave:
+    lda init_heights_wave,x
+    jmp store_height
+
+load_shifted_wave:
     lda init_heights_shifted_wave,x
+    jmp store_height
+
+load_dambreak:
+    lda init_heights_dambreak,x
+    
+store_height:
     sta heights+1,y
     sta display_heights,x // Match initial visual to physics
     sta target_h          // Use to draw initial column
@@ -176,12 +211,21 @@ ploop:
     rts
 
 cleanup:
-    lda $d011
-    and #%11011111
+    // 1. Reset Hardware to Text Mode
+    lda #%00011011  
     sta $d011
-    lda #%00010100 
+    lda #%00010100  
     sta $d018
-    jsr $e544
+
+    // 2. Restore Colors
+    lda #14         
+    sta $d020
+    lda #6          
+    sta $d021
+    lda #1          
+    sta $0286
+    
+    jsr $ff81       // Screen Editor Initialization
     rts
 
 // ----------------------------------------------------------------
@@ -202,15 +246,15 @@ splash_text:
     .text "                                        "
     .text "            MATTHIAS MUELLER            "
     .text "                                        "
+    .text "                                        "
     .text "           TEN MINUTE PHYSICS           "
     .text "         WWW.MATTHIASMUELLER.INFO       "
     .text "                                        "
-    .text "  CHOOSE INITIAL STATE WITH KEYS 1 - 3  "
-    .text "          EXIT WITH THE Q KEY           "
+    .text "                                        "
+    .text " RESET DIFFERENT STATES WITH KEYS 1 - 3 "
+    .text "     START / QUIT WITH ANY OTHER KEY    "
     .text "                                        "
     .text "           HAVE FUN WAVING!             "
-    .text "                                        "
-    .text "                                        "
     .text "                                        "
     .text "                                        "
     .text "                                        "
@@ -234,32 +278,37 @@ show_splash:
     lda #>SCREEN_RAM
     sta zp_draw_ptr+1
     
-    ldx #0              // High byte counter
-    ldy #0              // Low byte counter
+    ldx #0              // Page counter
 copy_loop:
+    ldy #0              // Low byte counter
+copy_page:
     lda (zp_temp_ptr),y
     sta (zp_draw_ptr),y
     iny
-    bne copy_loop
+    bne copy_page
     
     // Next page
     inc zp_temp_ptr+1
     inc zp_draw_ptr+1
     inx
-    cpx #4              // 4 pages covers 1000 bytes (pages 0-3)
+    cpx #4              // 4 pages covers 1024 bytes
     bne copy_loop
     
-    // Copy remaining 232 bytes (1000 - 768)
-    ldy #0
-copy_final:
-    cpy #232
-    beq done_copy
-    lda (zp_temp_ptr),y
-    sta (zp_draw_ptr),y
-    iny
-    bne copy_final
+    // Copy remaining bytes up to 1000 (we copied 1024, so skip 24 bytes)
+    // This is safer: just stop here since 1000 bytes is enough for 25 lines
     
 done_copy:
+    // Set color RAM for splash text (yellow = 7)
+    lda #7
+    ldx #0
+clr_color_loop:
+    sta $d800,x
+    sta $d900,x
+    sta $da00,x
+    sta $db00,x
+    inx
+    bne clr_color_loop
+    
     // Wait for key
     lda #0
 wait_for_key:
@@ -429,7 +478,9 @@ next_col:
     inc x_counter
     lda x_counter
     cmp #40
-    bne dloop
+    beq done_delta
+    jmp dloop
+done_delta:
     rts
 
 // ----------------------------------------------------------------
@@ -598,13 +649,28 @@ init_heights_wave: // Initial heights high byte (40 bytes)
     .byte  44,  36,  29,  22,  15,  10,   6,   3,   1,   0
 
 init_heights_shifted_wave: // Initial heights high byte (40 bytes)
-    .byte   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
-    .byte   0,   1,   3,   6,  10,  15,  22,  29,  36,  44
-    .byte  52,  60,  68,  75,  82,  87,  92,  96,  99, 100
-    .byte 100,  99,  96,  92,  87,  82,  75,  68,  60,  52
+    .byte  30,  30,  30,  30,  30,  30,  30,  30,  30,  30
+    .byte  30,  31,  32,  34,  38,  41,  46,  52,  57,  63
+    .byte  69,  75,  81,  86,  92,  95,  99, 102, 104, 105
+    .byte 105, 104, 102,  99,  95,  92,  86,  81,  75,  69
 
 init_heights_dambreak: // Initial heights high byte (40 bytes)
     .byte 100, 100, 100, 100, 100,  10,  10,  10,  10,  10
     .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
     .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
     .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
+
+// ----------------------------------------------------------------
+// Runtime Variables (Safe RAM, not Zero Page)
+// ----------------------------------------------------------------
+x_counter:      .byte 0
+iter_h:         .byte 0
+target_h:       .byte 0
+current_h:      .byte 0
+fill_val:       .byte 0
+limit_h:        .byte 0
+zp_col_offset:  .word 0
+temp_sum:       .word 0
+temp_term:      .word 0
+temp_acc:       .word 0
+config_select:  .byte 0
