@@ -36,6 +36,7 @@ start:
     sta $d020    
     sta $d021    
 
+    jsr show_splash
     jsr init_tables
     jsr init_graphics
     jsr init_physics
@@ -181,6 +182,90 @@ cleanup:
     lda #%00010100 
     sta $d018
     jsr $e544
+    rts
+
+// ----------------------------------------------------------------
+// Splash Screen Strings
+// ----------------------------------------------------------------
+
+.encoding "screencode_upper" 
+
+splash_text:
+    .text "                                        "
+    .text "                                        "
+    .text "                                        "
+    .text "                                        "
+    .text "                                        "
+    .text "             WAVE SIMULATOR             "
+    .text "                                        "
+    .text "                   BY                   "
+    .text "                                        "
+    .text "            MATTHIAS MUELLER            "
+    .text "                                        "
+    .text "           TEN MINUTE PHYSICS           "
+    .text "         WWW.MATTHIASMUELLER.INFO       "
+    .text "                                        "
+    .text "  CHOOSE INITIAL STATE WITH KEYS 1 - 3  "
+    .text "          EXIT WITH THE Q KEY           "
+    .text "                                        "
+    .text "           HAVE FUN WAVING!             "
+    .text "                                        "
+    .text "                                        "
+    .text "                                        "
+    .text "                                        "
+    .text "                                        "
+    .text "                                        "
+    .text "                                        "
+    .text "                                        "
+
+// ----------------------------------------------------------------
+// Splash Screen
+// ----------------------------------------------------------------
+
+show_splash:
+    // Copy splash_text (1000 bytes = 25 lines * 40 chars) to SCREEN_RAM
+    lda #<splash_text
+    sta zp_temp_ptr
+    lda #>splash_text
+    sta zp_temp_ptr+1
+    
+    lda #<SCREEN_RAM
+    sta zp_draw_ptr
+    lda #>SCREEN_RAM
+    sta zp_draw_ptr+1
+    
+    ldx #0              // High byte counter
+    ldy #0              // Low byte counter
+copy_loop:
+    lda (zp_temp_ptr),y
+    sta (zp_draw_ptr),y
+    iny
+    bne copy_loop
+    
+    // Next page
+    inc zp_temp_ptr+1
+    inc zp_draw_ptr+1
+    inx
+    cpx #4              // 4 pages covers 1000 bytes (pages 0-3)
+    bne copy_loop
+    
+    // Copy remaining 232 bytes (1000 - 768)
+    ldy #0
+copy_final:
+    cpy #232
+    beq done_copy
+    lda (zp_temp_ptr),y
+    sta (zp_draw_ptr),y
+    iny
+    bne copy_final
+    
+done_copy:
+    // Wait for key
+    lda #0
+wait_for_key:
+    jsr $ffe4           // GETIN
+    beq wait_for_key
+    
     rts
 
 // ----------------------------------------------------------------
