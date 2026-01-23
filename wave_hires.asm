@@ -547,6 +547,10 @@ uvloop:
     adc temp_acc+1
     sta velocities+1,y
 
+    // Apply signed velocity damping: velocity = velocity - (velocity >> 8)
+    // Preserves sign bit for negative velocities
+    jsr dampen_velocity
+
     inx
     cpx #40
     bne uvloop
@@ -596,6 +600,53 @@ next_h:
     inx
     cpx #40
     bne hloop
+    rts
+
+// ----------------------------------------------------------------
+// Signed Velocity Damping with >> 10 shift
+// Input:  X = index (velocities + X/X+1)
+// Output: damped velocity stored back to velocities
+// Computes: velocity = velocity - (velocity >> 10) with sign extension
+// ----------------------------------------------------------------
+dampen_velocity:
+    txa
+    asl
+    tay
+    
+    // Get velocity into temp_term
+    lda velocities,y
+    sta temp_term
+    lda velocities+1,y
+    sta temp_term+1
+    
+    // Compute shift amount = velocity >> 10
+    // Take high byte and shift right by 2 (arithmetic)
+    lda temp_term+1
+    asl             // Carry = sign bit
+    lda temp_term+1
+    ror             // Shift right by 1
+    asl             // Carry = sign bit again
+    ror             // Shift right by 1 more (total >> 2)
+    sta temp_shift
+    
+    // High byte of result = sign extension (0x00 if positive, 0xFF if negative)
+    bmi dampen_negative
+    lda #0
+    sta temp_shift+1
+    jmp dampen_subtract
+dampen_negative:
+    lda #$FF
+    sta temp_shift+1
+    
+dampen_subtract:
+    // velocity = velocity - shift
+    lda temp_term
+    sec
+    sbc temp_shift
+    sta velocities,y
+    lda temp_term+1
+    sbc temp_shift+1
+    sta velocities+1,y
     rts
 
 // Signed Division Subroutines
@@ -673,4 +724,5 @@ zp_col_offset:  .word 0
 temp_sum:       .word 0
 temp_term:      .word 0
 temp_acc:       .word 0
+temp_shift:     .word 0
 config_select:  .byte 0
