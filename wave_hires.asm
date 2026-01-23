@@ -175,25 +175,25 @@ ploop:
     // Select initial heights based on config_select
     lda config_select
     cmp #1
-    beq load_wave
+    beq load_center_wave
     cmp #2
     beq load_shifted_wave
     cmp #3
-    beq load_dambreak
+    beq load_two_waves
     
     // Default to shifted_wave
     jmp load_shifted_wave
 
-load_wave:
-    lda init_heights_wave,x
+load_center_wave:
+    lda init_heights_center_wave,x
     jmp store_height
 
 load_shifted_wave:
     lda init_heights_shifted_wave,x
     jmp store_height
 
-load_dambreak:
-    lda init_heights_dambreak,x
+load_two_waves:
+    lda init_heights_two_waves,x
     
 store_height:
     sta heights+1,y
@@ -603,49 +603,39 @@ next_h:
     rts
 
 // ----------------------------------------------------------------
-// Signed Velocity Damping with >> 10 shift
-// Input:  X = index (velocities + X/X+1)
-// Output: damped velocity stored back to velocities
-// Computes: velocity = velocity - (velocity >> 10) with sign extension
+// Simplified Signed Velocity Damping (velocity = velocity - velocity/1024)
 // ----------------------------------------------------------------
 dampen_velocity:
-    txa
-    asl
-    tay
+    // Y is already (x_counter * 2) from the calling loop
     
-    // Get velocity into temp_term
+    // 1. Load high byte to calculate delta and check sign
+    lda velocities+1,y   
+    sta temp_term       // delta low byte starts as v_hi (which is v >> 8)
+    
+    // 2. Arithmetic Shift Right twice to get from >>8 to >>10
+    cmp #$80             // Put sign bit into Carry
+    ror temp_term       // Shift 1 (v >> 9)
+    cmp #$80             
+    ror temp_term       // Shift 2 (v >> 10)
+
+    // 3. Determine high byte of delta (Sign Extension)
+    // We already have the high byte of the original velocity in the Accumulator
+    // (from the LDA velocities+1,y earlier)
+    bmi val_is_neg
+    lda #$00             // Velocity was positive
+    beq do_sub
+val_is_neg:
+    lda #$FF             // Velocity was negative
+do_sub:
+    sta temp_term+1     // Now temp_term is a proper 16-bit v >> 10
+
+    // 4. Perform the subtraction
     lda velocities,y
-    sta temp_term
-    lda velocities+1,y
-    sta temp_term+1
-    
-    // Compute shift amount = velocity >> 10
-    // Take high byte and shift right by 2 (arithmetic)
-    lda temp_term+1
-    asl             // Carry = sign bit
-    lda temp_term+1
-    ror             // Shift right by 1
-    asl             // Carry = sign bit again
-    ror             // Shift right by 1 more (total >> 2)
-    sta temp_shift
-    
-    // High byte of result = sign extension (0x00 if positive, 0xFF if negative)
-    bmi dampen_negative
-    lda #0
-    sta temp_shift+1
-    jmp dampen_subtract
-dampen_negative:
-    lda #$FF
-    sta temp_shift+1
-    
-dampen_subtract:
-    // velocity = velocity - shift
-    lda temp_term
     sec
-    sbc temp_shift
+    sbc temp_term
     sta velocities,y
-    lda temp_term+1
-    sbc temp_shift+1
+    lda velocities+1,y
+    sbc temp_term+1
     sta velocities+1,y
     rts
 
@@ -693,23 +683,23 @@ display_heights:.fill 40, 0
 table_y_lo:     .fill 200, 0
 table_y_hi:     .fill 200, 0
 
-init_heights_wave: // Initial heights high byte (40 bytes)
-    .byte   0,   1,   3,   6,  10,  15,  22,  29,  36,  44
-    .byte  52,  60,  68,  75,  82,  87,  92,  96,  99, 100
-    .byte 100,  99,  96,  92,  87,  82,  75,  68,  60,  52
-    .byte  44,  36,  29,  22,  15,  10,   6,   3,   1,   0
+init_heights_center_wave: // Initial heights high byte (40 bytes)
+    .byte  10,  11,  12,  15,  18,  21,  27,  32,  37,  43
+    .byte  49,  55,  61,  66,  72,  75,  79,  82,  84,  85
+    .byte  85,  84,  82,  79,  75,  72,  66,  61,  55,  49
+    .byte  43,  37,  32,  27,  21,  18,  15,  12,  11,  10
 
 init_heights_shifted_wave: // Initial heights high byte (40 bytes)
-    .byte  30,  30,  30,  30,  30,  30,  30,  30,  30,  30
-    .byte  30,  31,  32,  34,  38,  41,  46,  52,  57,  63
-    .byte  69,  75,  81,  86,  92,  95,  99, 102, 104, 105
-    .byte 105, 104, 102,  99,  95,  92,  86,  81,  75,  69
+    .byte  20,  20,  20,  20,  20,  20,  20,  20,  20,  20
+    .byte  20,  21,  22,  24,  28,  31,  36,  42,  47,  53
+    .byte  59,  65,  71,  76,  82,  85,  89,  92,  94,  95
+    .byte  95,  94,  92,  89,  85,  82,  76,  71,  65,  59
 
-init_heights_dambreak: // Initial heights high byte (40 bytes)
-    .byte 100, 100, 100, 100, 100,  10,  10,  10,  10,  10
+init_heights_two_waves: // 40 bytes: Two humps at the ends
+    .byte  10,  18,  30,  42,  48,  48,  42,  30,  18,  12
     .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
-    .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
-    .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
+    .byte  10,  10,  10,  10,  10,  10,  10,  12,  18,  30
+    .byte  42,  48,  48,  42,  30,  18,  10,  10,  10,  10    
 
 // ----------------------------------------------------------------
 // Runtime Variables (Safe RAM, not Zero Page)
