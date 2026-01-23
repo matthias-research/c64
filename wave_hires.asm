@@ -362,7 +362,7 @@ full_store:
     lda target_h
     beq next_col_full
     
-    // Draw 0..target_h
+    // Draw 0..target_h - use table pointers directly
     lda #0
     sta iter_h
 
@@ -419,11 +419,11 @@ dloop:
     txa
     asl
     tay
-    lda heights+1,y  // Get physics high byte
+    lda heights+1,y      // Get physics high byte
     // Scale x2 (Double Visualization)
-    cmp #100        // If >= 100, doubled value >= 200
+    cmp #100             // If >= 100, doubled value >= 200
     bcs delta_max
-    asl             // Double it
+    asl                  // Double it
     jmp delta_store
 delta_max:  
     lda #199
