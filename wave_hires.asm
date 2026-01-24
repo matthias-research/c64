@@ -1,6 +1,5 @@
 // wave_hires.asm
 // High Resolution Wave Simulator for C64
-// Fixes: Register preservation, sign-extended shifts, and column loop logic.
 
 // --- constants ---
 .const BITMAP_MEM = $2000
@@ -17,7 +16,6 @@
 * = $4000
 
 start:
-    // 1. Setup
     lda #0
     sta $d020    // border black
 
@@ -26,10 +24,8 @@ start:
     jsr init_graphics
 
 restart_sim:
-    jsr init_graphics  // Clear bitmap before redrawing
+    jsr init_graphics
     jsr init_physics
-    
-    // Draw initial state robustly
     jsr display_full 
 
 wait_start:
@@ -267,6 +263,8 @@ splash_text:
 // ----------------------------------------------------------------
 
 show_splash:
+    lda #0          // Black
+    sta $d021       // Set background color register
     // Copy splash_text (1000 bytes = 25 lines * 40 chars) to SCREEN_RAM
     lda #<splash_text
     sta zp_temp_ptr
@@ -397,20 +395,10 @@ d_exit:
 display_delta:
     lda #0
     sta x_counter
-dloop:
-    // Calculate column base (X * 8)
-    lda x_counter
     sta zp_col_offset
-    lda #0
     sta zp_col_offset+1
-    
-    // Shift left 3 times (x8)
-    asl zp_col_offset
-    rol zp_col_offset+1
-    asl zp_col_offset
-    rol zp_col_offset+1
-    asl zp_col_offset
-    rol zp_col_offset+1
+dloop:
+    // Column base is already in zp_col_offset
 
     ldx x_counter
     lda display_heights,x
@@ -475,6 +463,14 @@ render_loop:
     sta display_heights,x
 
 next_col:
+    // Advance column offset by 8
+    lda zp_col_offset
+    clc
+    adc #8
+    sta zp_col_offset
+    bcc !+
+    inc zp_col_offset+1
+!:
     inc x_counter
     lda x_counter
     cmp #40
@@ -506,18 +502,13 @@ update_velocities:
 
     ldx #0
 uvloop:
-    stx x_counter
-    txa
-    asl
-    tay
-    
     // (Left + Right)
-    lda heights-2,y
+    lda heights-2,x
     clc
-    adc heights+2,y
+    adc heights+2,x
     sta temp_sum
-    lda heights-1,y
-    adc heights+3,y
+    lda heights-1,x
+    adc heights+3,x
     sta temp_sum+1
     
     // / 2
@@ -527,148 +518,125 @@ uvloop:
     // Accel = (Avg - Height) / 2
     lda temp_sum
     sec
-    sbc heights,y
+    sbc heights,x
     sta temp_term
     lda temp_sum+1
-    sbc heights+1,y
+    sbc heights+1,x
     sta temp_term+1
     
-    jsr divide_by_2
+    // Inline divide_by_2
+    // Corresponding to dt = 1/16 s, h = sqrt(2) m , c = 4 m/s 
+    lda temp_term+1
+    cmp #$80            // Sign to Carry
+    ror temp_term+1
+    ror temp_term
     
-    ldx x_counter
-    txa
-    asl
-    tay
-    lda velocities,y
+    // velocities += Accel
+    lda velocities,x
     clc
-    adc temp_acc
-    sta velocities,y
-    lda velocities+1,y
-    adc temp_acc+1
-    sta velocities+1,y
+    adc temp_term
+    sta velocities,x
+    lda velocities+1,x
+    adc temp_term+1
+    sta velocities+1,x
 
-    // Apply signed velocity damping: velocity = velocity - (velocity >> 8)
-    // Preserves sign bit for negative velocities
-    jsr dampen_velocity
+    // Inline dampen_velocity
+    // Calculate delta = velocity >> 10
+    lda velocities+1,x
+    sta temp_term       // Start with v >> 8
+    
+    cmp #$80            // Sign to Carry
+    ror temp_term       // v >> 9
+    cmp #$80
+    ror temp_term       // v >> 10
+    
+    // Sign extend delta high byte
+    bmi !+
+    lda #0
+    beq !++
+!:  lda #$FF
+!:
+    sta temp_term+1
+    
+    // velocity -= delta
+    lda velocities,x
+    sec
+    sbc temp_term
+    sta velocities,x
+    lda velocities+1,x
+    sbc temp_term+1
+    sta velocities+1,x
 
     inx
-    cpx #40
+    inx
+    cpx #80
     bne uvloop
     rts
 
 update_heights:
     ldx #0
 hloop:
-    stx x_counter
-    txa
-    asl
-    tay
-    lda velocities,y
-    sta temp_term
-    lda velocities+1,y
-    sta temp_term+1
+    lda velocities,x
+    sta temp_acc
+    lda velocities+1,x
+    sta temp_acc+1
     
-    jsr divide_by_16
+    // Inline Divide by 16 (ASR 4 times)
+    // This corresponds to dt = 1/16 s
     
-    ldx x_counter
-    txa
-    asl
-    tay
-    lda heights,y
+    // Shift 1
+    lda temp_acc+1
+    cmp #$80        // Copy Sign Bit to Carry
+    ror temp_acc+1
+    ror temp_acc
+    
+    // Shift 2
+    lda temp_acc+1
+    cmp #$80
+    ror temp_acc+1
+    ror temp_acc
+    
+    // Shift 3
+    lda temp_acc+1
+    cmp #$80
+    ror temp_acc+1
+    ror temp_acc
+    
+    // Shift 4
+    lda temp_acc+1
+    cmp #$80
+    ror temp_acc+1
+    ror temp_acc
+    
+    lda heights,x
     clc
     adc temp_acc
-    sta heights,y
-    lda heights+1,y
+    sta heights,x
+    lda heights+1,x
     adc temp_acc+1
-    sta heights+1,y
+    sta heights+1,x
 
     // Simple Clamping
     bpl !+
     lda #0
-    sta heights,y
-    sta heights+1,y
+    sta heights,x
+    sta heights+1,x
     jmp next_h
-!:  lda heights+1,y
+!:  lda heights+1,x
     cmp #200
     bcc next_h
     lda #199
-    sta heights+1,y
+    sta heights+1,x
     lda #0
-    sta heights,y
+    sta heights,x
 
 next_h:
     inx
-    cpx #40
+    inx
+    cpx #80
     bne hloop
     rts
 
-// ----------------------------------------------------------------
-// Simplified Signed Velocity Damping (velocity = velocity - velocity/1024)
-// ----------------------------------------------------------------
-dampen_velocity:
-    // Y is already (x_counter * 2) from the calling loop
-    
-    // 1. Load high byte to calculate delta and check sign
-    lda velocities+1,y   
-    sta temp_term       // delta low byte starts as v_hi (which is v >> 8)
-    
-    // 2. Arithmetic Shift Right twice to get from >>8 to >>10
-    cmp #$80             // Put sign bit into Carry
-    ror temp_term       // Shift 1 (v >> 9)
-    cmp #$80             
-    ror temp_term       // Shift 2 (v >> 10)
-
-    // 3. Determine high byte of delta (Sign Extension)
-    // We already have the high byte of the original velocity in the Accumulator
-    // (from the LDA velocities+1,y earlier)
-    bmi val_is_neg
-    lda #$00             // Velocity was positive
-    beq do_sub
-val_is_neg:
-    lda #$FF             // Velocity was negative
-do_sub:
-    sta temp_term+1     // Now temp_term is a proper 16-bit v >> 10
-
-    // 4. Perform the subtraction
-    lda velocities,y
-    sec
-    sbc temp_term
-    sta velocities,y
-    lda velocities+1,y
-    sbc temp_term+1
-    sta velocities+1,y
-    rts
-
-// Signed Division Subroutines
-divide_by_2:
-    lda temp_term+1
-    asl             // Carry = sign bit
-    lda temp_term+1
-    ror             // Shift sign back in
-    sta temp_acc+1
-    lda temp_term
-    ror
-    sta temp_acc
-    rts
-
-divide_by_16:
-    lda temp_term+1
-    sta temp_acc+1
-    lda temp_term
-    sta temp_acc
-    ldy #4
-div_loop:
-    lda temp_acc+1
-    asl
-    lda temp_acc+1
-    ror
-    sta temp_acc+1
-    lda temp_acc
-    ror
-    sta temp_acc
-    dey
-    bne div_loop
-    rts
 
 // ----------------------------------------------------------------
 // Data
@@ -695,12 +663,18 @@ init_heights_shifted_wave: // Initial heights high byte (40 bytes)
     .byte  59,  65,  71,  76,  82,  85,  89,  92,  94,  95
     .byte  95,  94,  92,  89,  85,  82,  76,  71,  65,  59
 
-init_heights_two_waves: // 40 bytes: Two humps at the ends
-    .byte  10,  18,  30,  42,  48,  48,  42,  30,  18,  12
-    .byte  10,  10,  10,  10,  10,  10,  10,  10,  10,  10
-    .byte  10,  10,  10,  10,  10,  10,  10,  12,  18,  30
-    .byte  42,  48,  48,  42,  30,  18,  10,  10,  10,  10    
-
+init_heights_two_waves: // 40 bytes: Two humps at the ends (all values +10)
+    .byte  20,  28,  40,  52,  58,  58,  52,  40,  28,  22
+    .byte  20,  20,  20,  20,  20,  20,  20,  20,  20,  20
+    .byte  20,  20,  20,  20,  20,  20,  20,  22,  28,  40
+    .byte  52,  58,  58,  52,  40,  28,  20,  20,  20,  20
+    
+init_heights_ramp: // 40 bytes: Linear ramp from 10 to 100
+    .byte  10,  12,  15,  17,  20,  22,  25,  27,  30,  32
+    .byte  35,  37,  40,  42,  45,  47,  50,  52,  55,  57
+    .byte  60,  62,  65,  67,  70,  72,  75,  77,  80,  82
+    .byte  85,  87,  90,  92,  95,  97, 100, 100, 100, 100
+    
 // ----------------------------------------------------------------
 // Runtime Variables (Safe RAM, not Zero Page)
 // ----------------------------------------------------------------
